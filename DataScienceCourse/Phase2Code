@@ -1,0 +1,125 @@
+import numpy as np
+import pandas as pd
+import scipy
+from scipy.spatial import distance
+from sklearn.preprocessing import MinMaxScaler
+import easygui as eg
+from easygui import *
+
+
+df_train = pd.read_csv('C:/Users/user/Downloads/Telegram Desktop/train_data.csv')
+
+#ghedmat - tedade tabaghat -
+df = pd.DataFrame()
+df['Oldness'] = 2015 - df_train['YearRemodAdd']
+df['Floor'] = df_train['2ndFlrSF'].apply(lambda x:2 if x > 0 else 1)
+df['Area'] = df_train['LotArea']*0.092903
+df['Bedrooms'] = df_train['BedroomAbvGr']
+df['Price'] = df_train['SalePrice']
+df['MSZoning'] = df_train['MSZoning']
+df['District'] = df_train['Neighborhood']
+
+
+question1 = "Select the Zoning"
+title1 = "MSZoning"
+listOfOptions1 = np.unique(df_train['MSZoning'])
+choice1 = eg.multchoicebox(question1 , title1, listOfOptions1)
+
+question2 = "Select the District"
+title2 = "District"
+listOfOptions2 = np.unique(df_train['Neighborhood'])
+choice2 = eg.multchoicebox(question2 , title2, listOfOptions2)
+
+######
+msg = "Enter the factors below"
+title = "Attributes"
+fieldNames = ["max_Oldness","min_Oldness","max_Floor","min_Floor","max_Area","min_Area",
+    "max_Bedrooms","min_Bedrooms","max_Price","min_Price"]
+fieldValues = []  # we start with blanks for the values
+fieldValues = multenterbox(msg,title, fieldNames)
+# make sure that none of the fields was left blank
+while 1:
+    if fieldValues == None: break
+    errmsg = ""
+    for i in range(len(fieldNames)):
+      if fieldValues[i].strip() == "":
+        errmsg = errmsg + ('"%s" is a required field.\n\n' % fieldNames[i])
+    if errmsg == "": break # no problems found
+    fieldValues = multenterbox(errmsg, title, fieldNames, fieldValues)
+
+max_min=[]
+for i in np.arange(0,5,1):
+     max_min.append(int(np.max(df.iloc[:,i:i+1])))
+     max_min.append(int(np.min(df.iloc[:,i:i+1])))
+
+dis_record=[]
+for i in np.arange(0,10,2):
+    if fieldValues[i]=='Ni':
+        fieldValues[i]=max_min[i]
+    if fieldValues[i+1]=='Ni':
+        fieldValues[i+1]=max_min[i+1]
+    dis_record.append((int(fieldValues[i])+int(fieldValues[i+1]))/2)
+
+df_dis=df[(df['MSZoning'].isin(choice1))&(df['District'].isin(choice2))]
+
+test=df_dis.iloc[:,:5].columns
+scaler = MinMaxScaler(copy=True, feature_range=(0, 1))
+scaler.fit(df_dis.iloc[:,:5])
+df_dis.iloc[:,:5] = scaler.transform(df_dis.iloc[:,:5])
+df_dis.iloc[:,:5] = pd.DataFrame(df_dis.iloc[:,:5])
+df_dis.iloc[:,:5].columns = test
+
+dis_record = scaler.transform(np.array(dis_record).reshape(1,-1))
+
+
+dis_num= []
+for i in np.arange(0,df_dis.shape[0],1):
+    dis_num.append(scipy.spatial.distance.cdist(dis_record,df_dis.iloc[i:i+1,:5],'euclidean'))
+
+df_dis['Dis']=dis_num
+df_dis=df_dis.sort_values(by='Dis',ascending=True)
+
+
+df_dis.iloc[:,:5] = scaler.inverse_transform(df_dis.iloc[:,:5])
+df_dis.iloc[:,:5] = pd.DataFrame(df_dis.iloc[:,:5])
+df_dis.iloc[:,:5].columns = test
+
+df_dis['Diferent_Budget']=(df_dis['Price']-scaler.inverse_transform(dis_record)[0][4])
+df_dis['Fund Raise']=df_dis['Diferent_Budget'].apply(lambda x:'Yes' if x > 5000 else 'No')
+
+Result=df_dis.head(3).drop(['Dis','Diferent_Budget'],axis=1)
+Result_abs=df_dis[abs(df_dis['Diferent_Budget'])<=5000].head(3).drop(['Dis','Diferent_Budget'],axis=1)
+Result_above=df_dis[df_dis['Diferent_Budget']>=5000].head(3).drop(['Dis','Diferent_Budget'],axis=1)
+Result_less=df_dis[df_dis['Diferent_Budget']<=-5000].head(3).drop(['Dis','Diferent_Budget'],axis=1)
+
+if df_dis.empty:
+    dis_num = []
+    for i in np.arange(0, df_dis.shape[0], 1):
+        dis_num.append(scipy.spatial.distance.cdist(dis_record, df.iloc[i:i + 1, :5], 'euclidean'))
+    test = df.iloc[:, :5].columns
+    scaler = MinMaxScaler(copy=True, feature_range=(0, 1))
+    scaler.fit(df.iloc[:, :5])
+    df.iloc[:, :5] = scaler.transform(df.iloc[:, :5])
+    df.iloc[:, :5] = pd.DataFrame(df.iloc[:, :5])
+    df.iloc[:, :5].columns = test
+
+    dis_record = scaler.transform(np.array(dis_record).reshape(1, -1))
+
+    dis_num = []
+    for i in np.arange(0, df.shape[0], 1):
+        dis_num.append(scipy.spatial.distance.cdist(dis_record, df.iloc[i:i + 1, :5], 'euclidean'))
+
+    df['Dis'] = dis_num
+    df = df.sort_values(by='Dis', ascending=True)
+
+    df.iloc[:, :5] = scaler.inverse_transform(df.iloc[:, :5])
+    df.iloc[:, :5] = pd.DataFrame(df.iloc[:, :5])
+    df.iloc[:, :5].columns = test
+
+    df['Diferent_Budget'] = (df['Price'] - scaler.inverse_transform(dis_record)[0][4])
+    df['Fund Raise'] = df['Diferent_Budget'].apply(lambda x: 'Yes' if x > 5000 else 'No')
+
+    Result = df.head(3).drop(['Dis', 'Diferent_Budget'], axis=1)
+    Result_abs = df[abs(df['Diferent_Budget']) <= 5000].head(3).drop(['Dis', 'Diferent_Budget'], axis=1)
+    Result_above = df[df['Diferent_Budget'] >= 5000].head(3).drop(['Dis', 'Diferent_Budget'], axis=1)
+    Result_less = df[df['Diferent_Budget'] <= -5000].head(3).drop(['Dis', 'Diferent_Budget'], axis=1)
