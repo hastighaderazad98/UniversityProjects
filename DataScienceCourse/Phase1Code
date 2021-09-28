@@ -1,0 +1,390 @@
+import numpy as np
+import pandas as pd
+import matplotlib.pyplot as plt
+import impyute
+from sklearn.linear_model import Ridge
+from sklearn.linear_model import ElasticNet
+from sklearn.linear_model import Lasso
+from sklearn import ensemble as en
+from sklearn.model_selection import cross_val_score
+from sklearn.model_selection import train_test_split
+from sklearn.metrics import mean_absolute_error as mae
+from sklearn.preprocessing import MinMaxScaler
+from sklearn.ensemble import IsolationForest
+import seaborn as sns
+import folium
+
+#Rading Data
+df_train = pd.read_csv('G:/Telegram Desktop/train_data.csv')
+df_train.shape
+df_train.describe()
+df_train.dtypes
+
+map=df_train.groupby('Neighborhood').count().iloc[:,0:1]
+
+m = folium.Map(location=[41,-90],zoom_start=5)
+folium.Marker(location=[40.479717,-89.033002],
+    popup='Bloomington Heights',icon=folium.Icon(color='red', icon='info-sign')).add_to(m)
+folium.Marker(location=[40.054218, -88.192292],
+    popup='Bluestem',icon=folium.Icon(color='red', icon='info-sign')).add_to(m)
+folium.Marker(location=[41.607025, -81.509672],
+    popup='Briardale',icon=folium.Icon(color='red', icon='info-sign')).add_to(m)
+folium.Marker(location=[41.446835, -81.702149],
+    popup='Brookside',icon=folium.Icon(color='red', icon='info-sign')).add_to(m)
+folium.Marker(location=[40.946321, -81.810177],
+    popup='Clear Creek',icon=folium.Icon(color='red', icon='info-sign')).add_to(m)
+folium.Marker(location=[37.240437, -76.707074],
+    popup='College Creek',icon=folium.Icon(color='red', icon='info-sign')).add_to(m)
+folium.Marker(location=[37.210434, -76.534007],
+    popup='Crawford',icon=folium.Icon(color='red', icon='info-sign')).add_to(m)
+folium.Marker(location=[39.643489, -106.593708],
+    popup='Edwards',icon=folium.Icon(color='red', icon='info-sign')).add_to(m)
+folium.Marker(location=[33.317311, -111.760357],
+    popup='Gilbert',icon=folium.Icon(color='red', icon='info-sign')).add_to(m)
+folium.Marker(location=[42.647359, -94.933906],
+    popup='Iowa DOT and Rail Road',icon=folium.Icon(color='red', icon='info-sign')).add_to(m)
+folium.Marker(location=[29.423751, -98.641537],
+    popup='Meadow Village',icon=folium.Icon(color='red', icon='info-sign')).add_to(m)
+folium.Marker(location=[29.387204, -98.616215],
+    popup='Mitchell',icon=folium.Icon(color='red', icon='info-sign')).add_to(m)
+folium.Marker(location=[42.048156, -93.628639],
+    popup='North Ames',icon=folium.Icon(color='red', icon='info-sign')).add_to(m)
+folium.Marker(location=[34.235454, -118.529970],
+    popup='Northridge',icon=folium.Icon(color='red', icon='info-sign')).add_to(m)
+folium.Marker(location=[47.712954, -122.343678],
+    popup='Northpark Villa',icon=folium.Icon(color='red', icon='info-sign')).add_to(m)
+folium.Marker(location=[40.875283, -96.677718],
+    popup='Northridge Heights',icon=folium.Icon(color='red', icon='info-sign')).add_to(m)
+folium.Marker(location=[42.037947, -93.669472],
+    popup='Northwest Ames',icon=folium.Icon(color='red', icon='info-sign')).add_to(m)
+folium.Marker(location=[41.912544, -87.641628],
+    popup='Old Town',icon=folium.Icon(color='red', icon='info-sign')).add_to(m)
+folium.Marker(location=[42.024821, -93.649453],
+    popup='South & West of Iowa State University',icon=folium.Icon(color='red', icon='info-sign')).add_to(m)
+folium.Marker(location=[41.889764, -86.546707],
+    popup='Sawyer',icon=folium.Icon(color='red', icon='info-sign')).add_to(m)
+folium.Marker(location=[41.893974, -86.618633],
+    popup='Sawyer West',icon=folium.Icon(color='red', icon='info-sign')).add_to(m)
+folium.Marker(location=[51.074332, -3.054477],
+    popup='Somerset',icon=folium.Icon(color='blue', icon='info-sign')).add_to(m)
+folium.Marker(location=[52.443197, -1.974417],
+    popup='Stone Brook',icon=folium.Icon(color='blue', icon='info-sign')).add_to(m)
+folium.Marker(location=[53.3300, -0.332221],
+    popup='Timberland',icon=folium.Icon(color='blue', icon='info-sign')).add_to(m)
+folium.Marker(location=[42.041256, -93.649744],
+    popup='Veenker',icon=folium.Icon(color='red', icon='info-sign')).add_to(m)
+m.save('index.html')
+
+
+
+#PreProcess
+#Feature Engineering
+df_train['ROldness'] = 2015 - df_train['YearRemodAdd']
+df_train = df_train.drop(['YearRemodAdd'], axis=1)
+df_train['Oldness'] = 2015 - df_train['YearBuilt']
+df_train = df_train.drop(['YearBuilt'], axis=1)
+df_train['GOldness'] = 2015 - df_train['GarageYrBlt']
+df_train = df_train.drop(['GarageYrBlt'], axis=1)
+df_train['Floor'] = df_train['2ndFlrSF'].apply(lambda x:2 if x > 0 else 1)
+
+
+
+#Categorical2Numeric
+check = ['Po','Fa','TA','Gd','Ex']
+
+i_count = np.arange(0, df_train.shape[0])
+j_count = np.arange(0, df_train.shape[1])
+k_count = np.arange(0, 5)
+
+header = []
+for i in i_count:
+    for j in j_count:
+        for k in k_count:
+            if df_train.iloc[i,j] == check[k]:
+                header.append([df_train.columns[j]])
+                continue
+header = pd.DataFrame(header)
+header = pd.unique(header[0])
+
+df_train['BsmtExposure']= df_train['BsmtExposure'].replace(['No','Mn','Av','Gd'],[1,2,3,4])
+df_train= df_train.replace(['Po','Fa','TA','Gd','Ex'],[1,2,3,4,5])
+
+i_count = np.arange(0, header.shape[0])
+for i in i_count:
+    df_train[header[i]]=df_train[header[i]].replace(np.nan,0)
+
+df_train= df_train.replace(['MnWw','GdWo','MnPrv','GdPrv'],[1,2,3,4])
+df_train['Fence']=df_train['Fence'].replace(np.nan,0)
+
+df_train['GarageFinish']= df_train['GarageFinish'].replace(['Unf','RFn','Fin'],[1,2,3])
+df_train['GarageFinish']=df_train['GarageFinish'].replace(np.nan,0)
+
+df_train= df_train.replace(['Unf','LwQ','Rec','BLQ','ALQ','GLQ'],[1,2,3,4,5,6])
+df_train['BsmtFinType1']=df_train['BsmtFinType1'].replace(np.nan,0)
+df_train['BsmtFinType2']=df_train['BsmtFinType2'].replace(np.nan,0)
+
+label = []
+for y in df_train.columns:
+    if(df_train[y].dtype == np.object):
+        label.append(y)
+
+label = pd.DataFrame(label)
+
+df_train = pd.concat([df_train, pd.get_dummies(df_train[label[0]],prefix=label[0])], axis=1)
+df_train = df_train.drop(label[0], axis=1)
+
+
+#Imputation
+
+df_count_isnaR = pd.DataFrame(df_train.isna().sum(axis=1))
+df_count_isnaR['percentage']=round(df_count_isnaR[0]/df_train.shape[1],3)
+df_count_isnaR= df_count_isnaR.sort_values(0,ascending=False)
+
+df_count_isnaA = pd.DataFrame(df_train.isna().sum())
+df_count_isnaA['percentage']=round(df_count_isnaA[0]/df_train.shape[0],3)
+df_count_isnaA= df_count_isnaA.sort_values(0,ascending=False)
+
+cor1 = df_train.corr()
+cor = cor1['SalePrice']
+cor = pd.DataFrame(cor)
+cor = cor.sort_values(by = 'SalePrice',ascending = False)
+
+
+complete_data = impyute.mice(df_train)
+complete_data.columns = df_train.columns
+
+#Outlier Detection
+sns.distplot(df_train['SalePrice'], bins=10, kde=True,color='b')
+plt.show()
+
+df_train.SalePrice = np.log(df_train.SalePrice)
+
+sns.distplot(df_train['SalePrice'], bins=10, kde=True,color='b')
+plt.show()
+
+clf = IsolationForest(max_samples=100)
+clf.fit(complete_data)
+y=clf.predict(complete_data)
+list(y).count(-1)
+complete_data = complete_data[np.where(y == 1, True, False)]
+
+complete_data.SalePrice = np.log(complete_data.SalePrice)
+
+y_train = (complete_data.SalePrice)
+x_train = complete_data.drop(['SalePrice'], axis = 1)
+
+
+test=x_train.columns
+scaler = MinMaxScaler(copy=True, feature_range=(0, 1))
+scaler.fit(x_train)
+x_train = scaler.transform(x_train)
+x_train = pd.DataFrame(x_train)
+x_train.columns = test
+
+
+X_train, X_test, Y_train, Y_test = train_test_split(x_train, y_train, test_size=0.2)
+
+score_RR = []
+for i in np.arange(800,2000,200):
+    for k in np.arange(0.2,1.5,0.1):
+        clf_1 = Ridge(alpha=k,normalize=True,solver='auto',max_iter=i)
+        clf_1.fit(X_train, Y_train)
+        score_RR.append([i,k, np.mean(cross_val_score(clf_1, X_train, Y_train,scoring='neg_mean_absolute_error',cv=10))])
+
+
+score_RR = pd.DataFrame(score_RR)
+score_RR = score_RR.sort_values(by = 2 ,ascending=False)
+
+clf_1 = Ridge(alpha=0.2, normalize=True, solver='svd', max_iter=1800)
+clf_1.fit(X_train, Y_train)
+mae(Y_test,clf_1.predict(X_test))
+
+
+score_GBR = []
+for i in np.arange(1,6):
+    for j in np.arange(0.1, 1.3, 0.1):
+        for k in np.arange(50,500,50):
+            clf_2 = en.GradientBoostingRegressor(loss='huber',n_estimators=k,learning_rate=j,max_depth=i)
+            clf_2.fit(X_train, Y_train)
+            score_GBR.append([i,j,k, np.mean(cross_val_score(clf_2, X_train, Y_train,scoring='neg_mean_absolute_error',cv=10))])
+
+score_GBR = pd.DataFrame(score_GBR)
+score_GBR = score_GBR.sort_values(by = 3 ,ascending=False)
+
+clf_2 = en.GradientBoostingRegressor(loss='huber', n_estimators=300, learning_rate=0.2, max_depth=2)
+clf_2.fit(X_train, Y_train)
+mae(Y_test,clf_2.predict(X_test))
+
+score_RFR = []
+for i in np.arange(1, 25):
+        for k in np.arange(50, 500, 50):
+            clf_3 = en.RandomForestRegressor(oob_score=True,max_features='log2',n_estimators=k,max_depth=i)
+            clf_3.fit(X_train, Y_train)
+            score_RFR.append([i,k, np.mean(cross_val_score(clf_3, X_train, Y_train, scoring='neg_mean_absolute_error',cv=10))])
+
+score_RFR = pd.DataFrame(score_RFR)
+score_RFR = score_RFR.sort_values(by=2, ascending=False)
+
+clf_3 = en.RandomForestRegressor(oob_score=True, max_features='log2', n_estimators=200, max_depth=21)
+clf_3.fit(X_train, Y_train)
+mae(Y_test,clf_3.predict(X_test))
+
+
+score_ABR = []
+for j in np.arange(0.1, 1.3, 0.1):
+    for k in np.arange(50,400,50):
+        clf_4 = en.AdaBoostRegressor(n_estimators=k,learning_rate=j)
+        clf_4.fit(X_train, Y_train)
+        score_ABR.append([j,k, np.mean(cross_val_score(clf_4, X_train, Y_train,scoring='neg_mean_absolute_error',cv=10))])
+
+score_ABR = pd.DataFrame(score_ABR)
+score_ABR = score_ABR.sort_values(by = 2 ,ascending=False)
+
+clf_4 = en.AdaBoostRegressor(n_estimators=100, learning_rate=0.8)
+clf_4.fit(X_train, Y_train)
+mae(Y_test,clf_4.predict(X_test))
+
+
+score_ELR = []
+for i in np.arange(0.1,2, 0.1):
+    for j in np.arange(0.1, 2, 0.1):
+        for k in np.arange(200,2000,200):
+            clf_5 = ElasticNet(alpha=i, l1_ratio=j,max_iter=k, normalize=True)
+            clf_5.fit(X_train,Y_train)
+            score_ELR.append([i,j,k, np.mean(cross_val_score(clf_5, X_train, Y_train,scoring='neg_mean_absolute_error',cv=10))])
+
+score_ELR = pd.DataFrame(score_ELR)
+score_ELR = score_ELR.sort_values(by = 3 ,ascending=False)
+
+clf_5 = ElasticNet(alpha=0.1, l1_ratio=0.1, max_iter=200, normalize=True)
+clf_5.fit(X_train, Y_train)
+mae(Y_test,clf_5.predict(X_test))
+
+
+score_LasR = []
+for i in np.arange(0.1,2,0.1):
+        for k in np.arange(100, 2000, 100):
+            clf_6 = Lasso(alpha=i,normalize=True,max_iter=k)
+            clf_6.fit(X_train, Y_train)
+            score_LasR.append([i,k, np.mean(cross_val_score(clf_6, X_train, Y_train, scoring='neg_mean_absolute_error',cv=10))])
+
+score_LasR = pd.DataFrame(score_LasR)
+score_LasR = score_LasR.sort_values(by=2,ascending=False)
+
+clf_6 = Lasso(alpha=0.1,normalize=True,max_iter=100)
+clf_6.fit(X_train, Y_train)
+mae(Y_test,clf_6.predict(X_test))
+
+
+
+from sklearn.metrics import mean_squared_error as mse
+final_score_G=[]
+for i in np.arange(1,1000,1):
+    X_train, X_test, Y_train, Y_test = train_test_split(x_train, y_train, test_size=0.2)
+    clf_2 = en.GradientBoostingRegressor(loss='huber', n_estimators=300, learning_rate=0.2, max_depth=2)
+    clf_2.fit(X_train, Y_train)
+    final_score_G.append([i,np.sqrt(mse(Y_test,clf_2.predict(X_test)))/np.sqrt(np.mean((Y_test - np.mean(Y_test))**2))])
+
+final_score_G=pd.DataFrame(final_score_G)
+np.mean(final_score_G)
+
+final_score_R=[]
+for i in np.arange(1,1000,1):
+    X_train, X_test, Y_train, Y_test = train_test_split(x_train, y_train, test_size=0.2)
+    clf_1 = Ridge(alpha=0.2, normalize=True, solver='svd', max_iter=1800)
+    clf_1.fit(X_train, Y_train)
+    final_score_R.append([i,np.sqrt(mse(Y_test,clf_1.predict(X_test)))/np.sqrt(np.mean((Y_test - np.mean(Y_test))**2))])
+
+final_score_R=pd.DataFrame(final_score_R)
+np.mean(final_score_R)
+
+
+#test data
+datas_test = pd.read_csv('C:/Users/user/Downloads/Telegram Desktop/test_data.csv')
+
+
+datas_test['ROldness'] = 2015 - datas_test['YearRemodAdd']
+datas_test = datas_test.drop(['YearRemodAdd'], axis=1)
+datas_test['Oldness'] = 2015 - datas_test['YearBuilt']
+datas_test = datas_test.drop(['YearBuilt'], axis=1)
+datas_test['GarageYrBlt']=datas_test['GarageYrBlt'].replace('Hamed',1915)
+datas_test['GarageYrBlt']=datas_test['GarageYrBlt'].astype('float64')
+datas_test['GOldness'] = 2015 - datas_test['GarageYrBlt']
+datas_test = datas_test.drop(['GarageYrBlt'], axis=1)
+datas_test['Floor'] = datas_test['2ndFlrSF'].apply(lambda x:2 if x > 0 else 1)
+
+
+
+df_count_isnaRT = pd.DataFrame(datas_test.isna().sum(axis=1))
+df_count_isnaRT['percentage']=round(df_count_isnaRT[0]/datas_test.shape[1],3)
+df_count_isnaRT= df_count_isnaRT.sort_values(0,ascending=False)
+
+df_count_isnaAT = pd.DataFrame(datas_test.isna().sum())
+df_count_isnaAT['percentage']=round(df_count_isnaAT[0]/datas_test.shape[0],3)
+df_count_isnaAT= df_count_isnaAT.sort_values(0,ascending=False)
+
+
+i_count_test = np.arange(0, datas_test.shape[0])
+j_count_test = np.arange(0, datas_test.shape[1])
+k_count_test = np.arange(0, 5)
+
+header_T=[]
+check = ['Po','Fa','TA','Gd','Ex']
+
+for i in i_count_test:
+    for j in j_count_test:
+        for k in k_count_test:
+            if datas_test.iloc[i,j] == check[k]:
+                header_T.append([datas_test.columns[j]])
+                continue
+header_T = pd.DataFrame(header_T)
+header_T = pd.unique(header_T[0])
+
+
+datas_test['BsmtExposure']= datas_test['BsmtExposure'].replace(['Hamed','No','Mn','Av','Gd'],[0,1,2,3,4])
+datas_test= datas_test.replace(['Hamed','Po','Fa','TA','Gd','Ex'],[0,1,2,3,4,5])
+
+
+datas_test= datas_test.replace(['Hamed','MnWw','GdWo','MnPrv','GdPrv'],[0,1,2,3,4])
+datas_test['GarageFinish']= datas_test['GarageFinish'].replace(['Hamed','Unf','RFn','Fin'],[0,1,2,3])
+datas_test= datas_test.replace(['Hamed','Unf','LwQ','Rec','BLQ','ALQ','GLQ'],[0,1,2,3,4,5,6])
+
+float = ['MasVnrArea','BsmtFullBath','GarageArea','BsmtFinSF1','LotFrontage',
+         'BsmtFinSF2','BsmtUnfSF','TotalBsmtSF','GarageCars','BsmtHalfBath']
+
+for i in np.arange(0,10,1):
+    datas_test[float[i]] = datas_test[float[i]].replace('Hamed',0)
+    datas_test[float[i]] = datas_test[float[i]].astype('float64')
+
+label_t = []
+for y in datas_test.columns:
+    if(datas_test[y].dtype == np.object):
+        label_t.append(y)
+label_t = pd.DataFrame(label_t)
+
+datas_test = pd.concat([datas_test, pd.get_dummies(datas_test[label_t[0]],prefix=label_t[0])], axis=1)
+datas_test = datas_test.drop(label_t[0], axis=1)
+
+
+complete_data_T = impyute.mice(datas_test)
+complete_data_T.columns = datas_test.columns
+
+temp=list(set(list(complete_data_T.columns))-set(list(x_train.columns)))
+complete_data_T = complete_data_T.drop(temp,axis=1)
+
+temp=list(set(list(x_train.columns))-set(list(complete_data_T.columns)))
+for i in temp:
+    complete_data_T[i]=[0]*1605
+
+complete_data_T = complete_data_T[x_train.columns]
+
+clf_1 = Ridge(alpha=0.2, normalize=True, solver='svd', max_iter=1800)
+clf_1.fit(x_train, y_train)
+
+complete_data_T['SalePrice']= clf_1.predict(complete_data_T)
+
+datas_test = pd.read_csv('C:/Users/user/Downloads/Telegram Desktop/test_data (2).csv')
+datas_test['PricePrediction']=np.exp(complete_data_T['SalePrice'])
+datas_test.to_csv('C:/Users/user/Desktop/test_data')
+
+describe=datas_test['PricePrediction'].describe()
