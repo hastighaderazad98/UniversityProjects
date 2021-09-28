@@ -1,0 +1,367 @@
+#Importing Libraries
+from sklearn.metrics import mean_squared_error
+from sklearn.model_selection import cross_val_score
+import pandas as pd
+from sklearn.model_selection import train_test_split
+import numpy as np
+import sklearn as sk
+import matplotlib.pyplot as plt
+import sklearn as sk
+from sklearn.model_selection import train_test_split
+from sklearn.linear_model import LinearRegression
+from sklearn.metrics import r2_score
+from sklearn.metrics import mean_squared_error
+from sklearn.metrics import max_error
+import seaborn as sns
+import matplotlib.pyplot as plt
+
+
+
+#Loading the complete dataset
+df = pd.read_csv('C:/Users/user/Desktop/US_Accidents_June20.csv')
+
+#Feature Engineering
+df['Start_Time'].unique()
+df['Start_Time'] = pd.to_datetime(df['Start_Time'])
+df['date'] = df['Start_Time'].dt.date
+df['time'] = df['Start_Time'].dt.time
+df['year'] = pd.DatetimeIndex(df['date']).year
+df['month'] = pd.DatetimeIndex(df['date']).month
+
+#categorizing time
+conditions = [
+    (df['time'] <= '03:00:00'),
+    (df['time'] > '03:00:00') & (df['time'] <= '06:00:00'),
+    (df['time'] > '06:00:00') & (df['time'] <= '09:00:00'),
+    (df['time'] > '09:00:00') & (df['time'] <= '12:00:00'),
+    (df['time'] > '12:00:00') & (df['time'] <= '15:00:00'),
+    (df['time'] > '15:00:00') & (df['time'] <= '18:00:00'),
+    (df['time'] > '18:00:00') & (df['time'] <= '21:00:00'),
+    (df['time'] > '21:00:00')
+    ]
+
+values = ['0-3', '3-6', '6-9', '9-12','12-15', '15-18', '18-21', '21-24']
+df['time_intervals'] = np.select(conditions, values)
+
+
+
+#calculating the period of the accident
+df['Start_Time'] = pd.to_datetime(df['Start_Time'])
+s = df['Start_Time'].dt.time
+df['End_Time'] = pd.to_datetime(df['End_Time'])
+e = df['End_Time'].dt.time
+Time_diff = np.zeros(1050000)
+for i in range(1050000):
+    Time_diff[i]=(e[i].hour+e[i].minute/60.0)-(s[i].hour+s[i].minute/60.0)
+
+df['Time_diff'] = Time_diff
+
+df['Time_diff'].quantile([.1, .25, .5, .75])
+"""
+0.10    0.483333
+0.25    0.500000
+0.50    0.750000
+0.75    1.233333
+"""
+#Assigning high, medium and low labels to Time_diff using time difference quantile
+Time_conditions = [
+    (df['Time_diff'] <= 0.5),
+    (df['Time_diff'] > 0.5) & (df['Time_diff'] <= 0.75),
+    (df['Time_diff'] > 0.75 )
+    ]
+
+Time_values = ['low', 'medium', 'high']
+df['Time_diff'] = np.select(Time_conditions, Time_values)
+
+#Handling missing values
+isna = pd.DataFrame(df.isna().sum(axis=0))
+isna = isna.sort_values(by=0, ascending=False)
+isna['Per'] = isna.iloc[:,:1]/df.shape[0]
+
+isnaR = pd.DataFrame(df.isna().sum(axis=1))
+isnaR = isnaR.sort_values(by=0, ascending=False)
+isnaR['Per'] = isnaR.iloc[:,:1]/df.shape[1]
+
+
+df = df.drop(['End_Lat','End_Lng','Number','TMC','Source'], axis=1)
+df = df.drop(isnaR[isnaR['Per']>0.1].index)
+df = df.dropna(subset=['Weather_Condition','Wind_Direction'])
+df = df[df['Weather_Condition'] != 'N/A Precipitation']
+
+#Imputing missing values
+from sklearn.experimental import enable_iterative_imputer
+from sklearn.impute import IterativeImputer
+df_impute = df[['Temperature(F)', 'Wind_Chill(F)', 'Humidity(%)', 'Pressure(in)',
+       'Visibility(mi)', 'Wind_Speed(mph)','month']]
+
+corr = df_impute.corr()
+
+df_impute = pd.get_dummies(df_impute)
+
+IterativeImputer = IterativeImputer(missing_values=np.nan, sample_posterior=True, min_value=0,
+                                              random_state=0)
+DfIterative = df_impute.copy(deep=True)
+DfIterative.iloc[:, :] = IterativeImputer.fit_transform(DfIterative)
+
+for i in DfIterative.columns:
+    df[i] = DfIterative[i]
+
+df = df.dropna(subset=['Sunrise_Sunset', 'Civil_Twilight', 'Nautical_Twilight',
+       'Astronomical_Twilight'])
+
+#Weather condition values which their respecting precipitation is 0
+zero_list = ['Funnel Cloud', 'Haze/Windy','Heavy Smoke', 'Sand', 'Sand / Dust Whirlwinds'
+            ,'Sand / Dust Whirlwinds / Windy', 'Shallow Fog',
+             'Tornado', 'Volcanic Ash', 'Widespread Dust']
+
+for i in zero_list:
+    df['Precipitation(in)'].loc[df['Weather_Condition'] == i] = 0.0
+
+
+df_impute2 = df[['Temperature(F)', 'Precipitation(in)', 'Humidity(%)',
+                'Weather_Condition', 'month']]
+
+corr = df_impute.corr()
+
+df_impute2 = pd.get_dummies(df_impute2)
+
+#Feature Selection
+from mlxtend.feature_selection import SequentialFeatureSelector as SFS
+from sklearn.linear_model import LinearRegression
+from mlxtend.plotting import plot_sequential_feature_selection as plot_sfs
+
+lr = LinearRegression()
+temp = df_impute2.copy(deep=True)
+temp = temp.dropna()
+Y = temp['Precipitation(in)']
+X = temp.drop(['Precipitation(in)'], axis=1)
+
+
+sfs = SFS(lr,
+          k_features=30,
+          forward=True,
+          floating=False,
+          scoring='neg_mean_squared_error',
+          cv=5,
+          verbose=2)
+sfs = sfs.fit(X, Y)
+
+corr = df_impute2.corr()
+
+df_impute2 = df_impute2[['Humidity(%)', 'Temperature(F)', 'month', 'Precipitation(in)',
+   'Weather_Condition_Clear',
+   'Weather_Condition_Heavy Rain',
+   'Weather_Condition_Heavy Rain / Windy',
+   'Weather_Condition_Heavy Snow',
+   'Weather_Condition_Heavy T-Storm',
+   'Weather_Condition_Heavy T-Storm / Windy',
+   'Weather_Condition_Heavy Thunderstorms and Rain',
+   'Weather_Condition_Light Rain',
+   'Weather_Condition_Light Rain with Thunder',
+   'Weather_Condition_Light Thunderstorms and Rain',
+   'Weather_Condition_Overcast',
+   'Weather_Condition_Rain',
+   'Weather_Condition_Rain / Windy',
+   'Weather_Condition_Scattered Clouds',
+   'Weather_Condition_Snow',
+   'Weather_Condition_T-Storm',
+   'Weather_Condition_T-Storm / Windy',
+   'Weather_Condition_Thunderstorm',
+   'Weather_Condition_Thunderstorms and Rain']]
+
+IterativeImputer = IterativeImputer(missing_values=np.nan, sample_posterior=True, min_value=0,
+                                              random_state=0)
+DfIterative2 = df_impute2.copy(deep=True)
+DfIterative2.iloc[:, :] = IterativeImputer.fit_transform(DfIterative2)
+
+
+df['Precipitation(in)'] = DfIterative2['Precipitation(in)']
+
+#Sampling
+df = df.sample(n=1050000, replace=False)
+df.to_csv(r'C:/Users/user/Desktop/Final.csv')
+
+
+
+df.isnull()
+isna = pd.DataFrame(df.isna().sum(axis=0))
+isna_percent = pd.DataFrame(df.isna().sum(axis=0)/1000000)
+'''
+ID                     0.000000
+TMC                    0.000000
+Severity               0.000000
+Start_Lat              0.000000
+Start_Lng              0.000000
+Distance(mi)           0.000000
+Street                 0.000000
+Side                   0.000000
+City                   0.000034
+County                 0.000000
+State                  0.000000
+Zipcode                0.000148
+Country                0.000000
+Timezone               0.000613
+Airport_Code           0.001122
+Temperature(F)         0.013827
+Wind_Chill(F)          0.460022
+Humidity(%)            0.015221
+Pressure(in)           0.010765
+Visibility(mi)         0.017685
+Wind_Direction         0.013096
+Wind_Speed(mph)        0.099912
+Precipitation(in)      0.477350
+Weather_Condition      0.017128
+Amenity                0.000000
+'''
+describe = df.describe()
+
+df.dropna(axis=0,inplace=True)
+_______________________________________________
+
+
+#Clustering
+from sklearn.cluster import KMeans
+from sklearn.metrics import confusion_matrix,silhouette_samples, silhouette_score
+
+df_weather = df[['Temperature(F)','Wind_Chill(F)','Humidity(%)','Pressure(in)'
+,'Visibility(mi)','Wind_Speed(mph)','Precipitation(in)']]
+
+s_score=[]
+for k in np.arange(2, 10, 1):
+    kmeans = KMeans(n_clusters=k, random_state=0).fit(df_weather)
+    labels=kmeans.labels_
+    s_score.append([k,silhouette_score(df_weather,labels)])
+
+s_score = pd.DataFrame(s_score)
+s_score = s_score.sort_values(by=2, ascending=False)
+df = df.drop(['Source','Start_Time',
+              'End_Time','End_Lat','End_Lng','Description','Number'
+                 ,'Weather_Timestamp','Zipcode','Wind_Chill(F)','Precipitation(in)'],axis=1)
+
+df.columns
+
+""""
+Index(['ID', 'TMC', 'Severity', 'Start_Lat', 'Start_Lng', 'Distance(mi)',
+       'Street', 'Side', 'City', 'County', 'State', 'Zipcode', 'Country',
+       'Timezone', 'Airport_Code', 'Temperature(F)', 'Wind_Chill(F)',
+       'Humidity(%)', 'Pressure(in)', 'Visibility(mi)', 'Wind_Direction',
+       'Wind_Speed(mph)', 'Precipitation(in)', 'Weather_Condition', 'Amenity',
+       'Bump', 'Crossing', 'Give_Way', 'Junction', 'No_Exit', 'Railway',
+       'Roundabout', 'Station', 'Stop', 'Traffic_Calming', 'Traffic_Signal',
+       'Turning_Loop', 'Sunrise_Sunset', 'Civil_Twilight', 'Nautical_Twilight',
+       'Astronomical_Twilight', 'time', 'year', 'month', 'day'],
+      dtype='object')
+"""
+
+df.isnull()
+isna = pd.DataFrame(df.isna().sum(axis=0))
+isna_percent = pd.DataFrame(df.isna().sum(axis=0)/1000000)
+'''
+ID                     0.000000
+TMC                    0.000000
+Severity               0.000000
+Start_Lat              0.000000
+Start_Lng              0.000000
+Distance(mi)           0.000000
+Street                 0.000000
+Side                   0.000000
+City                   0.000034
+County                 0.000000
+State                  0.000000
+Zipcode                0.000148
+Country                0.000000
+Timezone               0.000613
+Airport_Code           0.001122
+Temperature(F)         0.013827
+Wind_Chill(F)          0.460022
+Humidity(%)            0.015221
+Pressure(in)           0.010765
+Visibility(mi)         0.017685
+Wind_Direction         0.013096
+Wind_Speed(mph)        0.099912
+Precipitation(in)      0.477350
+Weather_Condition      0.017128
+Amenity                0.000000
+'''
+describe = df.describe()
+df.dropna(axis=0,inplace=True)
+
+#categorizing time
+conditions = [
+    (df['time'] <= '03:00:00'),
+    (df['time'] > '03:00:00') & (df['time'] <= '06:00:00'),
+    (df['time'] > '06:00:00') & (df['time'] <= '09:00:00'),
+    (df['time'] > '09:00:00') & (df['time'] <= '12:00:00'),
+    (df['time'] > '12:00:00') & (df['time'] <= '15:00:00'),
+    (df['time'] > '15:00:00') & (df['time'] <= '18:00:00'),
+    (df['time'] > '18:00:00') & (df['time'] <= '21:00:00'),
+    (df['time'] > '21:00:00')
+    ]
+
+values = ['0-3', '3-6', '6-9', '9-12','12-15', '15-18', '18-21', '21-24']
+df['time_intervals'] = np.select(conditions, values)
+
+#__________________________________________________________#
+
+df_final = df.drop(['Unnamed: 0','ID','Country','Zipcode'
+,'Airport_Code','Distance(mi)','Start_Time','End_Time','Start_Lat',
+'Start_Lng','Description','Weather_Timestamp','date','time','Street'], axis=1)
+#Street memoryerror
+df = df_final
+
+df['Severity'] = df['Severity'].astype(str)
+df['year'] = df['year'].astype(str)
+df['month'] = df['month'].astype(str)
+df['labels'] = df['labels'].astype(str)
+
+df.to_csv(r'C:/Users/user/Desktop/Final_1.csv')
+
+#Recognizing not frequent cities
+PopularCities = city[city['Side']>=20].index
+df = df[df['City'] == list(PopularCities)]
+df = df.loc[df['City'].isin(list(PopularCities))]
+
+#Association Rules
+from mlxtend.frequent_patterns import apriori,association_rules
+
+D = pd.get_dummies(df)
+frequent_itemsets = apriori(D, min_support=0.05, use_colnames=True,max_len=5)
+
+rules = association_rules(frequent_itemsets, metric="confidence",min_threshold=0.6)
+
+#The most frequent Severity:
+
+df.groupby(['Severity']).count()
+
+#Association rules different combinations
+
+#stage 1:dropping features
+df_final = df.drop(['Unnamed: 0','ID','Country','Zipcode'
+,'Airport_Code','Distance(mi)','Start_Time','End_Time','Start_Lat',
+'Start_Lng','Description','Weather_Timestamp','date','time','Street'], axis=1)
+#Street, county has a lot of unique values therefore memory error occurs
+
+#stage 2:dropping features
+df_final = df.drop(['Unnamed: 0','County','State'], axis=1)
+df = df_final
+
+#stage 3:dropping features
+df_final = df.drop(['City','Timezone','Sunrise_Sunset','Civil_Twilight',
+                    'Nautical_Twilight'], axis=1)
+df = df_final
+
+
+from mlxtend.frequent_patterns import apriori,association_rules
+
+
+D = pd.get_dummies(df)
+frequent_itemsets = apriori(D, min_support=0.05, use_colnames=True,max_len=4)
+frequent_itemsets = apriori(D.sample(n=205000, replace=False), min_support=0.35, use_colnames=True,max_len=5)
+frequent_itemsets = apriori(D.sample(n=415000, replace=False), min_support=0.12, use_colnames=True,max_len=5)
+
+
+
+rules = association_rules(frequent_itemsets, metric="confidence",min_threshold=0.6)
+rules.to_csv(r'C:/Users/user/Desktop/Rules.csv')
+rules = rules.sort_values(by='confidence', ascending=False)
+
