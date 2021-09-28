@@ -1,0 +1,768 @@
+# Simulation of fast food restaurant:
+
+# There exists 3 different forms of entrance:
+# 1.Entering on foot dist.~ Negative exponential with  3 min as mean #First entrance after 10AM
+
+# 2.Entering by car dist.~ Negative exponential with mean = 5 min #First entrance after 10AM
+# Number of passengers in a car    Probability
+#          1                          0.2
+#          2                          0.3
+#          3                          0.3
+#          4                          0.2
+# 3.Entering by bus dist.~Uniform dist.[11AM,13PM] #There is only one bus
+# Number of passengers in the bus dist.~ Poisson with 30 person per hour as mean
+# Ordering food dist.~triangular[1,2,4]
+# Payment dist.~[1,2,3]
+# Receiving food dist.~uniform dist. [0.5,2]
+# Eating food dist.~triangular[10,20,30]
+# Travel time dist between parts except "Exit and salon".~Negative exponential with 0.5min as mean
+# Travel time dist "Exit and salon" parts.~Negative exponential with 1min as mean
+# People get service in a FIFO system
+# No limit on any Queue's length
+# Number of receptionists = 4 , Number of kitchen staff = 2
+# Determined rest times:10:50, 11:50, 13:50, 14:50 #Due to circumstances these times might change
+# Rest duration = 10 min
+
+# Outputs : 1- Customer Time Spent in System's Mean
+#          2- Time waiting to Receive food Mean
+#          3- Max of Seat queue's length
+#          4- Seat queue's length Mean
+#          5- Receptionist's efficiency mean
+#          6- Kitchen staff's efficiency mean
+#          7-our output
+# Starting State = System is empty and servers are idle
+
+
+# importing the libraries
+import numpy as np
+import xlsxwriter as xs
+import pandas as pd
+import matplotlib.pyplot as plt
+import math
+
+# Generating exponential random number
+ExpRandom = lambda y: -(1 / y) * (np.log(np.random.random()))
+
+# Generating uniform random number
+UniRandom = lambda a, b: a + (b - a) * (np.random.random())
+
+# Generating triangular random number
+TriRandom = lambda a, c, b: a + np.sqrt((b - a) * (c - a) * np.random.random()) \
+    if np.random.random() < (c - a) / (b - a) else b - np.sqrt((b - a) * (b - c) * (np.random.random()))
+
+
+# Generating poisson random number
+def PosRandom(alpha):
+  Z = np.sqrt(-2*np.log(np.random.random()))*np.sin(2*math.pi*np.random.random())
+  X = int(np.round(alpha+np.sqrt(alpha)*Z,0))
+  return X
+
+
+# Calculating the number of people in a car
+def CarRandom():
+    Rnd = np.random.random()
+    if Rnd < 0.2:
+        i = 1
+    elif Rnd < 0.5 and Rnd >= 0.2:
+        i = 2
+    elif Rnd < 0.8 and Rnd >= 0.5:
+        i = 3
+    else:
+        i = 4
+    return i
+
+
+# This function shows our initial state
+def starting_state():
+    state = dict()
+    # These are the state variables of this simulation
+    state['Order Queue Length'] = dict()
+    state['Receive Queue Length'] = dict()
+    state['Empty Seats'] = 30
+    state['Seat Queue Length'] = dict()
+    state['Idle Receptionists'] = 4
+    state['Idle Kitchen Staff'] = 2
+    state['Resting Receptionists'] = 0
+    state['Resting Kitchen Staff'] = 0
+    state['WRr'] = 0
+    # number of receptionists waiting to rest which is a binary variable
+    state['WRk'] = 0
+    # number of kitchen staff waiting to rest which is a binary variable
+    state['Ek'] = 0
+    state['Er'] = 0
+    state['ExtraR'] = 0
+    state['ExtraK'] = 0
+    state['Number of Current Customers'] = 0
+
+    # Data Collecting Dict: saves the times below for each customer
+    #   t0- Entrance, t1- Start of reception process, t2- End of reception process
+    #   t3- Entering kitchen queue, t4-Start of Receiving food, t5- End of receiving food
+    #   t6- Entering seat queue, t7- Start of Eating food, t8- End of eating food, t9- Exit
+    data = dict()
+    data['Event Clock'] = 0  # The event clock
+    data['Customers'] = dict()
+    # The customer {'Ci':[t0,t1,t2,t3,t4,t5,t6,t7,t8,t9]}
+
+    # Cumulative statistics
+    cum_stat = dict()
+    # cum_stat records history cumulatively from the beginning till a given time
+    cum_stat['Order Queue Length'] = 0
+    cum_stat['Receive Queue Length'] = 0
+    cum_stat['Seat Queue Length'] = 0
+    cum_stat['Order Queue Waiting Time'] = 0
+    cum_stat['Receive Queue Waiting Time'] = 0
+    cum_stat['Seat Queue Waiting Time'] = 0
+    cum_stat['Receiving Food Waiting Time'] = 0
+    # It consists of the time spent in the Receive queue
+    # and the time it takes for the food to be prepared by the kitchen staff
+
+    cum_stat['Total Number of Customers'] = 0
+    # Total number of customers from the beginning till a specific time
+    cum_stat['Receptionists Busy Time'] = 0
+    # For all 5 servers
+    cum_stat['Kitchen staff Busy Time'] = 0
+    # For both servers
+
+    cum_stat['Customer Time Spent in System'] = 0
+    # For all the customers till a specific time
+
+    # At the beginning, the first entrance on foot,by car and by bus should be generated as C1,Car1 and B1
+    future_event_list = list()
+    FEL_maker(future_event_list, 'Entrance On foot', 0, 'C1')
+    # Difference: make an entrance of specific customer (C1)
+    FEL_maker(future_event_list, 'Entrance By Car', 0, 'Car1')
+    # Difference: make an entrance of specific Car (Car1)
+    FEL_maker(future_event_list, 'Entrance By Bus', 0, 'B1')
+
+    # All predefined rest times are converted into minutes and appended in the FEL at the beginning.
+    # The 'RR" and the "RK" show that we are talking about server's rest.
+    future_event_list.append({'Event Type': 'Start of Receptionist Resting', 'Event Time': 50, 'Customer': 'RR'})
+    future_event_list.append({'Event Type': 'Start of Receptionist Resting', 'Event Time': 110, 'Customer': 'RR'})
+    future_event_list.append({'Event Type': 'Start of Receptionist Resting', 'Event Time': 230, 'Customer': 'RR'})
+    future_event_list.append({'Event Type': 'Start of Receptionist Resting', 'Event Time': 290, 'Customer': 'RR'})
+    future_event_list.append({'Event Type': 'Start of Kitchen staff Resting', 'Event Time': 50, 'Customer': 'RK'})
+    future_event_list.append({'Event Type': 'Start of Kitchen staff Resting', 'Event Time': 110, 'Customer': 'RK'})
+    future_event_list.append({'Event Type': 'Start of Kitchen staff Resting', 'Event Time': 230, 'Customer': 'RK'})
+    future_event_list.append({'Event Type': 'Start of Kitchen staff Resting', 'Event Time': 290, 'Customer': 'RK'})
+    future_event_list.append({'Event Type': 'Eleven', 'Event Time': 60, 'Customer': 'E'})
+    future_event_list.append({'Event Type': 'Thirteen', 'Event Time': 180, 'Customer': 'T'})
+
+    return state, data, future_event_list, cum_stat
+
+
+# This function makes the FEL.
+def FEL_maker(future_event_list, event_type, clock, customer):
+    global simulation_time
+    event_time = 0
+    if event_type == "Entrance On foot":
+        event_time = clock + ExpRandom(1 / 3)
+        if event_time > simulation_time:
+            # It prevents another entrance on foot after 15:00 which is 300 min
+            return
+    elif event_type == "Entrance By Car":
+        event_time = clock + ExpRandom(1 / 5)
+        if event_time > simulation_time:
+            # It prevents another entrance by car after 15:00 which is 300 min
+            return
+    elif event_type == "Entrance By Bus":
+        event_time = clock + UniRandom(60, 180)
+        if event_time > simulation_time:
+            # It prevents another entrance by bus after 15:00 which is 300 min
+            return
+    elif event_type == "End of Reception Service":
+        event_time = clock + TriRandom(1, 2, 4) + TriRandom(1, 2, 3)
+    elif event_type == "Start of Receiving Food":
+        event_time = clock + ExpRandom(2)
+    elif event_type == "Receiving Food":
+        event_time = clock + UniRandom(0.5, 2)
+    elif event_type == "Start of Eating Food":
+        event_time = clock + ExpRandom(2)
+    elif event_type == "End of Eating Food":
+        event_time = clock + TriRandom(10, 20, 30)
+    elif event_type == "Exit":
+        event_time = clock + ExpRandom(1)
+    elif event_type == 'End of Receptionist Resting':
+        event_time = clock + 10
+    elif event_type == "End of Kitchen staff Resting":
+        event_time = clock + 10
+    new_event = {'Event Type': event_type,
+                 'Event Time': event_time, 'Customer': customer}
+    # As mentioned above, for resting events, customer component is equal to 'RR'.
+    # additional element in event notices (Customer No.)
+    future_event_list.append(new_event)
+
+
+def Entrance_On_Foot(future_event_list, state, data, clock, customer, cum_stat):
+    state['Number of Current Customers'] += 1
+    # Number of customers who are still in the system
+    cum_stat['Total Number of Customers'] += 1
+    data['Customers'][customer] = []
+    # Add a place for the new customer
+
+    if state['Idle Receptionists'] > 0:
+        data['Customers'][customer].extend([clock, clock])
+        # In this case, the time in which the customer enters the queue is equal to
+        # the time he/she leaves the queue. t0 = t1 = clock
+        state['Idle Receptionists'] -= 1
+        # Make server busy
+        FEL_maker(future_event_list, "End of Reception Service", clock, customer)
+        # determine when  this customer's service ends.
+    else:
+        state['Order Queue Length'][customer] = clock
+        data['Customers'][customer].append(clock)
+        # t0
+    data['Event Clock'] = clock
+    # put the current clock on the last event clock  for the next event
+
+    # Extracting the customer number
+    customer_num = cum_stat['Total Number of Customers'] + 1
+    # Every customer needs a label to be individually recognized
+    FEL_maker(future_event_list, 'Entrance On foot', clock, 'C' + str(customer_num))
+    # predict the next customer's Arrival
+
+
+def Entrance_By_Car(future_event_list, state, data, clock, car, cum_stat):
+    Car_Customers = CarRandom()
+    # The number of customers in the car
+    customer = []
+    for i in np.arange(cum_stat['Total Number of Customers'] + 2,
+                       cum_stat['Total Number of Customers'] + Car_Customers + 2, 1):
+        customer.append('C' + str(i))
+        # This loop labels the customers of the car. +2 is to prevent repeating customer labels
+
+    cum_stat['Total Number of Customers'] += Car_Customers
+    state['Number of Current Customers'] += Car_Customers
+
+    for i in np.arange(0, Car_Customers, 1):
+        data['Customers'][customer[i]] = []
+        # Checking whether the server is busy or not
+        if state['Idle Receptionists'] > 0:
+            data['Customers'][customer[i]].extend([clock, clock])  # t0 = t1 = clock
+            state['Idle Receptionists'] -= 1  # Make a server busy
+            FEL_maker(future_event_list, "End of Reception Service", clock,
+                      customer[i])  # Determine when this customer's service ends.
+        else:
+            state['Order Queue Length'][customer[i]] = clock
+            data['Customers'][customer[i]].append(clock)  # t0
+
+    data['Event Clock'] = clock
+    # put the current clock on the last event clock  for the next event
+
+    # Extracting the car number
+    car_num = int(car[3:])
+    car_num += 1
+    FEL_maker(future_event_list, 'Entrance By Car', clock, 'Car' + str(car_num))
+    # predict the next car's Arrival
+
+
+def Entrance_By_Bus(future_event_list, state, data, clock, bus, cum_stat):
+    Bus_Customers = PosRandom(30)
+    # The number of customers in the bus
+    customer = []
+    for i in np.arange(cum_stat['Total Number of Customers'] + 2,
+                       cum_stat['Total Number of Customers'] + Bus_Customers + 2, 1):
+        customer.append('C' + str(i))
+        # This loop labels the customers of the bus. +2 is to prevent repeating customer labels
+
+    cum_stat['Total Number of Customers'] += Bus_Customers
+    state['Number of Current Customers'] += Bus_Customers
+
+    for i in np.arange(0, Bus_Customers, 1):
+        data['Customers'][customer[i]] = []
+        # Checking whether the server is busy or not
+        if state['Idle Receptionists'] > 0:
+            data['Customers'][customer[i]].extend([clock, clock])
+            # t0 = t1 = clock
+            state['Idle Receptionists'] -= 1
+            # Make server busy
+            FEL_maker(future_event_list, "End of Reception Service", clock,
+                      customer[i])  # Determine when this customer's service ends.
+        else:
+            state['Order Queue Length'][customer[i]] = clock
+            data['Customers'][customer[i]].append(clock)  # t0
+
+    data['Event Clock'] = clock
+    # put the current clock on the last event clock  for the next event
+
+
+def End_of_Reception_Service(future_event_list, state, data, clock, customer, cum_stat):
+    FEL_maker(future_event_list, "Start of Receiving Food", clock, customer)
+    # Forward look to generate the time to start receiving food
+    data['Customers'][customer].append(clock)
+    # t2 for the customer
+
+    if state['Er'] > 0:
+        state['Er'] -= 1
+        state['ExtraR'] -= 1
+    elif state['WRr'] > 0:
+        state['WRr'] -= 1
+        state['Resting Receptionists'] += 1
+        FEL_maker(future_event_list, "End of Receptionist Resting", clock, "RR")
+    else:
+        if len(state['Order Queue Length']) > 0:
+            # Accessing the first person in the queue
+            first_in_queue = min(state['Order Queue Length'], key=lambda k: state['Order Queue Length'][k])
+            data['Customers'][first_in_queue].append(clock)  # t1
+
+            cum_stat["Order Queue Waiting Time"] += (
+                    data['Customers'][first_in_queue][1] - data['Customers'][first_in_queue][0])
+            FEL_maker(future_event_list, "End of Reception Service", clock, first_in_queue)
+            del state['Order Queue Length'][first_in_queue]
+        else:
+            state['Idle Receptionists'] += 1
+    data['Event Clock'] = clock
+
+
+def Start_of_Receiving_Food(future_event_list, state, data, clock, customer, cum_stat):
+    if state['Idle Kitchen Staff'] > 0:
+        state['Idle Kitchen Staff'] -= 1
+        data['Customers'][customer].extend([clock, clock])  # t3 = t4
+        FEL_maker(future_event_list, "Receiving Food", clock, customer)
+    else:
+        state['Receive Queue Length'][customer] = clock
+        data['Customers'][customer].append(clock)  # Queue entering time or t3
+    data['Event Clock'] = clock
+
+
+def Receiving_Food(future_event_list, state, data, clock, customer, cum_stat):
+    cum_stat['Receiving Food Waiting Time'] += clock - data['Customers'][customer][3]  # clock - t3
+    FEL_maker(future_event_list, "Start of Eating Food", clock, customer)
+    data['Customers'][customer].append(clock)
+    # Appending t5 to customer's times
+
+    if state['Ek'] > 0:
+        state['Ek'] -= 1
+        state['ExtraK'] -= 1
+    elif state['WRk'] > 0:
+        state['WRk'] -= 1
+        state['Resting Kitchen Staff'] += 1
+        FEL_maker(future_event_list, "End of Kitchen staff Resting", clock, "RK")
+    else:
+        if len(state['Receive Queue Length']) > 0:
+            first_in_queue = min(state['Receive Queue Length'], key=lambda k: state['Receive Queue Length'][k])
+            data['Customers'][first_in_queue].append(clock)
+            cum_stat["Receive Queue Waiting Time"] += (
+                    data['Customers'][first_in_queue][4] - data['Customers'][first_in_queue][3])
+            FEL_maker(future_event_list, "Receiving Food", clock, first_in_queue)
+            del state['Receive Queue Length'][first_in_queue]
+            # Bringing out the first person in the queue
+        else:
+            state['Idle Kitchen Staff'] += 1
+    data['Event Clock'] = clock
+
+
+def Eating_Start(future_event_list, state, data, clock, customer, cum_stat):
+    if state['Empty Seats'] > 0:
+        state['Empty Seats'] -= 1
+        data['Customers'][customer].extend([clock, clock])  # t6 = t7
+        FEL_maker(future_event_list, "End of Eating Food", clock, customer)
+    else:
+        state['Seat Queue Length'][customer] = clock
+        data['Customers'][customer].append(clock)  # t6
+    data['Event Clock'] = clock
+
+
+Seat_Queue_Length = []
+
+
+def Eating_End(future_event_list, state, data, clock, customer, cum_stat):
+    FEL_maker(future_event_list, "Exit", clock, customer)
+    data['Customers'][customer].append(clock)  # t8
+    global Seat_Queue_Length
+    Seat_Queue_Length.append(len(state['Seat Queue Length']))
+    if len(state['Seat Queue Length']) > 0:
+        first_in_queue = min(state['Seat Queue Length'], key=lambda k: state['Seat Queue Length'][k])
+        data['Customers'][first_in_queue].append(clock)
+
+        cum_stat["Seat Queue Waiting Time"] += (
+                data['Customers'][first_in_queue][7] - data['Customers'][first_in_queue][6])
+        FEL_maker(future_event_list, "End of Eating Food", clock, first_in_queue)
+        del state['Seat Queue Length'][first_in_queue]
+        # Bringing out the first person in the queue
+    else:
+        state['Empty Seats'] += 1
+    data['Event Clock'] = clock
+
+
+def Exit(future_event_list, state, data, clock, customer, cum_stat):
+    data['Customers'][customer].append(clock)  # t9
+    state['Number of Current Customers'] -= 1
+    # A customer gets out of the system
+    cum_stat["Customer Time Spent in System"] += (data['Customers'][customer][9] - data['Customers'][customer][0])
+    # t9-t0
+    data['Event Clock'] = clock
+
+
+def Start_of_Receptionists_Resting(future_event_list, state, data, clock, customer, cum_stat):
+    if state['Idle Receptionists'] > 0:
+        state['Resting Receptionists'] += 1
+        FEL_maker(future_event_list, "End of Receptionist Resting", clock, customer)
+        state['Idle Receptionists'] -= 1
+        # Sending a receptionist to get some rest
+    else:
+        state['WRr'] += 1
+        # If no server is idle to go to rest, the number of servers waiting for a rest increases.
+    data['Event Clock'] = clock
+
+
+def Start_of_kitchen_staff_Resting(future_event_list, state, data, clock, customer, cum_stat):
+    if state['Idle Kitchen Staff'] > 0:
+        state['Resting Kitchen Staff'] += 1
+        FEL_maker(future_event_list, "End of Kitchen staff Resting", clock, customer)
+        state['Idle Kitchen Staff'] -= 1
+    else:
+        state['WRk'] += 1
+        # If no server is idle to go to rest, the number of servers waiting for a rest increases.
+    data['Event Clock'] = clock
+
+
+def End_of_Receptionists_Resting(future_event_list, state, data, clock, customer, cum_stat):
+    if len(state['Order Queue Length']) > 0:
+        first_in_queue = min(state['Order Queue Length'], key=lambda k: state['Order Queue Length'][k])
+        data['Customers'][first_in_queue].append(clock)
+        FEL_maker(future_event_list, "End of Reception Service", clock, first_in_queue)
+        del state['Order Queue Length'][first_in_queue]
+        state['Resting Receptionists'] -= 1
+    else:
+        state['Idle Receptionists'] += 1
+        state['Resting Receptionists'] -= 1
+    data['Event Clock'] = clock
+
+
+def End_of_kitchen_staff_Resting(future_event_list, state, data, clock, customer, cum_stat):
+    if len(state['Receive Queue Length']) > 0:
+        first_in_queue = min(state['Receive Queue Length'], key=lambda k: state['Receive Queue Length'][k])
+        data['Customers'][first_in_queue].append(clock)
+        FEL_maker(future_event_list, "Receiving Food", clock, first_in_queue)
+        del state['Receive Queue Length'][first_in_queue]
+        state['Resting Kitchen Staff'] -= 1
+    else:
+        state['Idle Kitchen Staff'] += 1
+        state['Resting Kitchen Staff'] -= 1
+    data['Event Clock'] = clock
+
+
+def eleven(future_event_list, state, data, clock, customer, cum_stat):
+    state['Idle Kitchen Staff'] += 1
+    state['ExtraK'] += 1
+
+    if len(state['Receive Queue Length']) > 0:
+        first_in_queue = min(state['Receive Queue Length'], key=lambda k: state['Receive Queue Length'][k])
+        data['Customers'][first_in_queue].append(clock)
+        FEL_maker(future_event_list, "Receiving Food", clock, first_in_queue)
+        del state['Receive Queue Length'][first_in_queue]
+        state['Idle Kitchen Staff'] -= 1
+
+
+    state['Idle Receptionists'] += 2
+    state['ExtraR'] += 2
+    while state['Idle Receptionists'] > 0 and len(state['Order Queue Length'])>0 :
+        if len(state['Order Queue Length']) > 0:
+            first_in_queue = min(state['Order Queue Length'], key=lambda k: state['Order Queue Length'][k])
+            data['Customers'][first_in_queue].append(clock)
+            FEL_maker(future_event_list, "End of Reception Service", clock, first_in_queue)
+            del state['Order Queue Length'][first_in_queue]
+            state['Idle Receptionists'] -= 1
+    data['Event Clock'] = clock
+
+
+def thirteen(future_event_list, state, data, clock, customer, cum_stat):
+    if (state['Idle Kitchen Staff'] > 0):
+        state['Idle Kitchen Staff'] -= 1
+        state['ExtraK'] -= 1
+    else:
+        state['Ek'] += 1
+
+    if (state['Idle Receptionists'] >= 2):
+        state['Idle Receptionists'] -= 2
+        state['ExtraR'] -= 2
+    elif (state['Idle Receptionists'] == 1):
+        state['Idle Receptionists'] -= 1
+        state['Er'] += 1
+        state['ExtraR'] -= 1
+    else:
+        state['Er'] += 2
+    data['Event Clock'] = clock
+
+
+def End_of_Simulation(future_event_list, state, data, clock, customer, cum_stat, max_Seat_Queue_Length):
+    Order_Queue_Waiting_Time = 0
+    Receive_Queue_Waiting_Time = 0
+    Number_Of_Total_Customers = 0
+    Order_Queue_Waiting_Time += cum_stat["Order Queue Waiting Time"]
+    Receive_Queue_Waiting_Time += cum_stat['Receive Queue Waiting Time']
+    Number_Of_Total_Customers += cum_stat['Total Number of Customers']
+    # In the lines above, the values of the cum stats are stored at the end of the simulation time
+
+    Time_Spent = 0
+    for i in data['Customers'].keys():
+        # data['Customers'].keys() provides the times allocated to each customer
+        if len(data['Customers'][
+                   i]) == 10:  # checking whether the customer is still in the system or not by checking whether "Exit" time has been generated or not
+            Time_Spent += data['Customers'][i][9] - data['Customers'][i][0]
+
+    # Calculating the number of customers who are not in the system anymore
+    Number_Of_Completely_Served_Customers = 0
+    Number_Of_Completely_Served_Customers += cum_stat['Total Number of Customers'] - state[
+        'Number of Current Customers']
+
+    # Calculating the number of customers which the process of receiving food has been completed for them with their waiting time.
+    Number_Of_Customers_Received_Food = 0
+    Receiving_Food_Waiting_Time = 0
+    for i in data['Customers'].keys():
+        # data['Customers'].keys() provides the times allocated to each customer
+        if len(data['Customers'][i]) >= 6:  # checking whether the customer has received his/her food or not
+            Receiving_Food_Waiting_Time += data['Customers'][i][5] - data['Customers'][i][3]
+            Number_Of_Customers_Received_Food += 1
+
+    # Calculating the length and the max length of the seat queue.
+    max_Seat_Queue = 0
+    max_Seat_Queue += max_Seat_Queue_Length
+    Seat_Queue_Length = cum_stat['Seat Queue Length']
+    if len(state['Seat Queue Length']) > 0:
+        max_Seat_Queue = max(max_Seat_Queue, len(state['Seat Queue Length']))
+
+    Receptionists_Busy_Time = 0
+    Receptionists_Busy_Time += cum_stat['Receptionists Busy Time']
+    Kitchen_staff_Busy_Time = 0
+    Kitchen_staff_Busy_Time += cum_stat['Kitchen staff Busy Time']
+
+    return Number_Of_Total_Customers, Number_Of_Completely_Served_Customers, Number_Of_Customers_Received_Food, Order_Queue_Waiting_Time, Receive_Queue_Waiting_Time, Time_Spent, Receiving_Food_Waiting_Time, Seat_Queue_Length, max_Seat_Queue, Receptionists_Busy_Time, Kitchen_staff_Busy_Time
+
+
+def output_excel(worksheet, future_event_list, state, row_num):
+    global max_fel
+    global header_list
+    # we update the header list in this function
+    future_event_list = sorted(future_event_list, key=lambda x: x['Event Time'])
+    # print(future_event_list)
+    new_row = [row_num, future_event_list[0]['Event Type'], future_event_list[0]['Event Time'],
+               len(state['Order Queue Length']), len(state['Receive Queue Length']),
+               len(state['Seat Queue Length']), state['Empty Seats'],
+               state['Idle Receptionists'], state['Idle Kitchen Staff'], state['Resting Receptionists'],
+               state['Resting Kitchen Staff'], state['WRr'], state['WRk'], state['Number of Current Customers']]
+    # Creating new row
+
+    # Update the header list and max_fel
+    if len(future_event_list) - 1 > max_fel:
+        for fel_counter in range(max_fel, len(future_event_list) - 1):
+            header_list.extend(
+                ("Future Event Type " + str(fel_counter + 1), "Future Event Time " + str(fel_counter + 1)))
+        max_fel = len(future_event_list) - 1
+
+    else:
+        for add_number in range(max_fel - len(future_event_list) + 1):
+            future_event_list.append({"Event Type": "", "Event Time": ""})
+
+    for fel in future_event_list[1:]:
+        new_row.extend((fel['Event Type'], fel['Event Time']))
+    for col in range(len(header_list)):
+        worksheet.write(0, col, header_list[col])
+        worksheet.write(row_num, col, new_row[col])
+
+    return worksheet
+
+
+# Setting the excel format
+def excel_formatting(workbook, worksheet, row_num):
+    cell_format_header = workbook.add_format()
+    cell_format_header.set_align('center')
+    cell_format_header.set_align('vcenter')
+    cell_format_header.set_font('Times New Roman')
+    cell_format_header.set_bold(True)
+    worksheet.set_row(0, None, cell_format_header)
+
+    worksheet.set_column(0, 0, 5)
+    worksheet.set_column(1, 1, 13)
+    worksheet.set_column(2, 2, 9)
+    worksheet.set_column(3, 4, 8)
+    worksheet.set_column(5, 4 + 2 * max_fel, 19)
+    cell_format = workbook.add_format()
+    cell_format.set_align('center')
+    cell_format.set_font('Times New Roman')
+    for row in range(row_num):
+        worksheet.set_row(row + 1, None, cell_format)
+
+    return workbook
+
+
+def simulation(simulation_time):
+    state, data, future_event_list, cum_stat = starting_state()
+    # Initial state
+    max_Seat_Queue_Length = 0
+    clock = 0
+    check = 6  # This variable is for the warm-up period detection part to prevent the denominator to be 0
+    mem = []  # A list for the warm-up period detection part which holds the avg of customer spent time.
+    memc = []  # A list which stores the times in the warm-up period detection part
+    future_event_list.append({'Event Type': 'End of Simulation', 'Event Time': simulation_time, 'Customer': ''})
+    future_event_list.append({'Event Type': 'Start of Simulation', 'Event Time': 0, 'Customer': ''})
+
+    workbook = xs.Workbook('Simulation_Project.xlsx')
+    worksheet = workbook.add_worksheet('Restaurant')
+    row_num = 1
+
+    # The simulation continues til the last customer in the restaurant exits.
+    # The point to make here is that the restaurant will not accept any new customers after 15:00
+    while clock < simulation_time or state['Number of Current Customers'] > 0:
+        sorted_fel = sorted(future_event_list, key=lambda x: x['Event Time'])
+        # print("sorted fel=")
+        # print(sorted_fel)
+        current_event = sorted_fel[0]
+        # The first element is the thing that's happening now
+        clock = current_event['Event Time']
+        # Move the time forward
+        # print(current_event['Event Type'])
+        cum_stat['Order Queue Length'] += len(state['Order Queue Length']) * (clock - data['Event Clock'])
+        cum_stat['Receive Queue Length'] += len(state['Receive Queue Length']) * (clock - data['Event Clock'])
+        cum_stat['Seat Queue Length'] += len(state['Seat Queue Length']) * (clock - data['Event Clock'])
+
+        temp = len(state['Seat Queue Length'])
+        max_Seat_Queue_Length = max(temp, max_Seat_Queue_Length)
+
+        cum_stat["Receptionists Busy Time"] += (4 + state['ExtraR'] - state['Idle Receptionists'] - state[
+            'Resting Receptionists']) * (
+                                                       clock - data['Event Clock'])
+
+        cum_stat["Kitchen staff Busy Time"] += (2 + state['ExtraK'] - state['Idle Kitchen Staff'] - state[
+            'Resting Kitchen Staff']) * (
+                                                       clock - data['Event Clock'])
+
+        if current_event['Event Type'] == 'End of Simulation':
+            Number_Of_Total_Customers, Number_Of_Completely_Served_Customers, Number_Of_Customers_Received_Food, Order_Queue_Waiting_Time, Receive_Queue_Waiting_Time, Time_Spent, Receiving_Food_Waiting_Time, Seat_Queue_Length, max_Seat_Queue, Receptionists_Busy_Time, Kitchen_staff_Busy_Time = End_of_Simulation(
+                future_event_list, state, data, clock, current_customer, cum_stat, max_Seat_Queue_Length)
+
+        # print("state=")
+        # print(state)
+        # print("cum_stat=")
+        # print(cum_stat)
+        # print("data=")
+        # print(data)
+
+        if clock < simulation_time or state['Number of Current Customers'] > 0:
+            current_customer = current_event['Customer']
+            if current_event['Event Type'] == 'Entrance On foot':
+                Entrance_On_Foot(future_event_list, state, data, clock, current_customer, cum_stat)
+            elif current_event['Event Type'] == 'Entrance By Car':
+                Entrance_By_Car(future_event_list, state, data, clock, current_customer, cum_stat)
+            elif current_event['Event Type'] == 'Eleven':
+                eleven(future_event_list, state, data, clock, current_customer, cum_stat)
+            elif current_event['Event Type'] == 'Thirteen':
+                thirteen(future_event_list, state, data, clock, current_customer, cum_stat)
+            elif current_event['Event Type'] == 'Entrance By Bus':
+                Entrance_By_Bus(future_event_list, state, data, clock, current_customer, cum_stat)
+            elif current_event['Event Type'] == 'End of Reception Service':
+                End_of_Reception_Service(future_event_list, state, data, clock, current_customer, cum_stat)
+            elif current_event['Event Type'] == 'Start of Receiving Food':
+                Start_of_Receiving_Food(future_event_list, state, data, clock, current_customer, cum_stat)
+            elif current_event['Event Type'] == 'Receiving Food':
+                Receiving_Food(future_event_list, state, data, clock, current_customer, cum_stat)
+            elif current_event['Event Type'] == 'Start of Eating Food':
+                Eating_Start(future_event_list, state, data, clock, current_customer, cum_stat)
+            elif current_event['Event Type'] == 'End of Eating Food':
+                Eating_End(future_event_list, state, data, clock, current_customer, cum_stat)
+
+            elif current_event['Event Type'] == 'Start of Receptionist Resting':
+                Start_of_Receptionists_Resting(future_event_list, state, data, clock, current_customer, cum_stat)
+            elif current_event['Event Type'] == 'Start of Kitchen staff Resting':
+                Start_of_kitchen_staff_Resting(future_event_list, state, data, clock, current_customer, cum_stat)
+
+            elif current_event['Event Type'] == 'End of Receptionist Resting':
+                End_of_Receptionists_Resting(future_event_list, state, data, clock, current_customer, cum_stat)
+            elif current_event['Event Type'] == 'End of Kitchen staff Resting':
+                End_of_kitchen_staff_Resting(future_event_list, state, data, clock, current_customer, cum_stat)
+
+            elif current_event['Event Type'] == 'Exit':
+                Exit(future_event_list, state, data, clock, current_customer, cum_stat)
+
+            output_excel(worksheet, future_event_list, state, row_num)
+            row_num += 1
+            future_event_list.remove(current_event)
+            if clock >= check:
+                #print(state['ExtraK'])
+                #print(state['ExtraR'])
+                #print(clock)
+                if cum_stat['Total Number of Customers'] - state['Number of Current Customers'] == 0:
+                    mem.append(cum_stat['Customer Time Spent in System'] / state['Number of Current Customers'])
+                    memc.append(clock)
+                    check += 30  # This part is for detecting warm-up period and checks the times each 30 min
+                else:
+                    mem.append(cum_stat['Customer Time Spent in System'] / (
+                                cum_stat['Total Number of Customers'] - state['Number of Current Customers']))
+                    memc.append(clock)
+                    check += 30
+
+    # outputs
+    # This part is more detailed in the excel file provided for the warm-up period detection
+    plt.plot(memc, mem, c='b')
+    plt.xlabel('Clock')
+    plt.ylabel('Length')
+    plt.show()
+
+    # simulation time outputs
+    # Output1
+    Customer_Time_Spent_1 = Time_Spent / Number_Of_Completely_Served_Customers
+    print("Customer_Time_Spent_1")
+    print(Customer_Time_Spent_1)
+    # Output2
+    Receiving_Food_Waiting_Time_1 = Receiving_Food_Waiting_Time / Number_Of_Customers_Received_Food
+    print("Receiving_Food_Waiting_Time_1")
+    print(Receiving_Food_Waiting_Time_1)
+    # Output3
+    Seat_Queue_Length_1 = Seat_Queue_Length / simulation_time
+    print("Seat_Queue_Length_1")
+    print(Seat_Queue_Length_1)
+    max_Seat_Queue_1 = max_Seat_Queue
+    print("max_Seat_Queue_1")
+    print(max_Seat_Queue_1)
+    # Output4
+    Receptionists_util_1 = Receptionists_Busy_Time / (simulation_time * 4.8)
+    print("Receptionists_util_1")
+    print(Receptionists_util_1)
+    KitchenStaff_util_1 = Kitchen_staff_Busy_Time / (simulation_time * 2.4)
+    print("KitchenStaff_util_1")
+    print(KitchenStaff_util_1)
+    # Output5
+    Turnover_Ratio_1 = simulation_time / Number_Of_Total_Customers
+    print("Turnover_Ratio_1")
+    print(Turnover_Ratio_1)
+
+    # outputs till the restaurant gets empty
+    # Note that since the results were almost the same as the outputs above, these parts do not have a "print" section.
+    # Output1
+    Customer_Time_Spent_2 = cum_stat['Customer Time Spent in System'] / len(data['Customers'])
+    # Output2
+    Receiving_Food_Waiting_Time_2 = cum_stat['Receiving Food Waiting Time'] / len(data['Customers'])
+    # Output3
+    Seat_Queue_Length_2 = cum_stat['Seat Queue Length'] / clock
+    max_Seat_Queue_2 = max_Seat_Queue_Length
+    # Output4
+    Receptionists_util_2 = cum_stat['Receptionists Busy Time'] / (clock * 4.8)
+    KitchenStaff_util_2 = cum_stat['Kitchen staff Busy Time'] / (clock * 2.4)
+    # print("final clock")
+    # print(clock)
+
+    workbook = excel_formatting(workbook, worksheet, row_num)
+    workbook.close()
+    print("End!")
+    # return Customer_Time_Spent_1, Receiving_Food_Waiting_Time_1, Receptionists_util_1, KitchenStaff_util_1
+    return mem, memc
+
+
+max_fel = 0
+# Maximum length that FEL gets (the current event does not count in)
+header_list = ['Step', 'Current Event', 'Clock', 'Order Queue Length', 'Receive Queue Length', 'Seat Queue Length',
+               'Empty Seats', 'Idle Receptionists', 'Idle Kitchen Staff', 'Resting Receptionists',
+               'Resting Kitchen Staff', 'WRr', 'WRk', 'Number of Current Customers']
+simulation_time = int(input("Enter the Simulation Time: "))
+simulation(simulation_time)
+""""
+#Performing 5 replications
+Result = []
+for i in np.arange(0, 5, 1):
+    Result.append(simulation(simulation_time))
+
+Result = pd.DataFrame(Result)
+#print(np.mean(Result), axis=0)
+#Result.columns = ['TimeSpent', 'ReceivingTime', 'RUtil', 'KUtil']
+print(Result)
+"""
